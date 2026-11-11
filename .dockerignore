@@ -1,0 +1,8 @@
+**
+!Dockerfile
+!requirements.txt
+!constraints.txt
+!worker.py
+!inspect_db.py
+!rag_core/
+!rag_core/*.py
