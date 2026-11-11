@@ -1,12 +1,10 @@
-"""One question at a time per pod; KEDA controls the number of pods."""
+"""One question at a time per pod, with explicit acknowledgements and lock renewal."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import timedelta
 import json
 import logging
-import os
 import signal
 import threading
-import time
 
 from azure.servicebus import ServiceBusClient, ServiceBusMessage, AutoLockRenewer
 from rag_core.chat import validate_request, process_question, reply, cache_reply, InvalidRequest
@@ -41,14 +39,11 @@ def main():
     model = AzureModels(settings)
     count = settings.integer('retrieval-count', 1, 8)
     similarity = float(settings.values['min-similarity'])
-    delay = int(os.getenv('DEMO_DELAY_SECONDS', '0'))
-    if not 0 <= delay <= 30:
-        raise ValueError('Demonstration delay must be 0..30 seconds')
     with settings.connect() as connection:
         connection.execute('SELECT 1 FROM chat_requests LIMIT 1')
     health = ThreadingHTTPServer(('0.0.0.0', 8080), Health)
     threading.Thread(target=health.serve_forever, daemon=True).start()
-    LOG.info('Worker ready: retrieval_count=%s demo_delay=%s concurrency=1 prefetch=0', count, delay)
+    LOG.info('Worker ready: retrieval_count=%s concurrency=1 prefetch=0', count)
     with ServiceBusClient(settings.values['servicebus-host'], settings.credential()) as bus, AutoLockRenewer() as renewer:
         with bus.get_queue_receiver('chat-requests', prefetch_count=0, max_wait_time=5) as receiver, \
              bus.get_queue_sender('chat-replies') as sender:
@@ -61,9 +56,6 @@ def main():
                         receiver.dead_letter_message(message, reason='invalid_request', error_description='Body or correlation headers are invalid')
                         continue
                     try:
-                        if delay:
-                            # ONLY for the bounded scaling exercise. Off normally.
-                            time.sleep(delay)
                         with settings.connect() as connection:
                             result = process_question(connection, request, model, count, similarity)
                         publish(sender, result)
